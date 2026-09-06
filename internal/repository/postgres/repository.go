@@ -10,19 +10,25 @@ import (
 	"github.com/gradis/ya-pr_diploma-1/internal/repository"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Repository struct {
-	pool *pgxpool.Pool
+type connection interface {
+	Ping(context.Context) error
+	Begin(context.Context) (pgx.Tx, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+type Repository struct {
+	db connection
+}
+
+func New(db connection) *Repository {
+	return &Repository{db: db}
 }
 
 func (r *Repository) Ping(ctx context.Context) error {
-	return r.pool.Ping(ctx)
+	return r.db.Ping(ctx)
 }
 
 func (r *Repository) CreateUser(ctx context.Context, login, passwordHash string) (int64, error) {
@@ -32,7 +38,7 @@ VALUES ($1, $2)
 RETURNING id;`
 
 	var userID int64
-	if err := r.pool.QueryRow(ctx, query, login, passwordHash).Scan(&userID); err != nil {
+	if err := r.db.QueryRow(ctx, query, login, passwordHash).Scan(&userID); err != nil {
 		if uniqueViolation(err) {
 			return 0, repository.ErrLoginExists
 		}
@@ -49,7 +55,7 @@ FROM users
 WHERE login = $1;`
 
 	var user model.User
-	if err := r.pool.QueryRow(ctx, query, login).Scan(&user.ID, &user.Login, &user.PasswordHash); err != nil {
+	if err := r.db.QueryRow(ctx, query, login).Scan(&user.ID, &user.Login, &user.PasswordHash); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.User{}, repository.ErrUserNotFound
 		}
@@ -67,7 +73,7 @@ ON CONFLICT (number) DO NOTHING
 RETURNING user_id;`
 
 	var ownerID int64
-	err := r.pool.QueryRow(ctx, insertQuery, number, userID).Scan(&ownerID)
+	err := r.db.QueryRow(ctx, insertQuery, number, userID).Scan(&ownerID)
 	if err == nil {
 		return repository.OrderCreated, nil
 	}
@@ -76,7 +82,7 @@ RETURNING user_id;`
 	}
 
 	const ownerQuery = `SELECT user_id FROM orders WHERE number = $1;`
-	if err := r.pool.QueryRow(ctx, ownerQuery, number).Scan(&ownerID); err != nil {
+	if err := r.db.QueryRow(ctx, ownerQuery, number).Scan(&ownerID); err != nil {
 		return 0, fmt.Errorf("select existing order owner: %w", err)
 	}
 
@@ -94,7 +100,7 @@ FROM orders
 WHERE user_id = $1
 	ORDER BY uploaded_at DESC, number DESC;`
 
-	rows, err := r.pool.Query(ctx, query, userID)
+	rows, err := r.db.Query(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("select user orders: %w", err)
 	}
@@ -130,7 +136,7 @@ FROM users
 WHERE id = $1;`
 
 	var balance model.Balance
-	if err := r.pool.QueryRow(ctx, query, userID).Scan(
+	if err := r.db.QueryRow(ctx, query, userID).Scan(
 		&balance.CurrentCents,
 		&balance.WithdrawnCents,
 	); err != nil {
@@ -149,7 +155,7 @@ func (r *Repository) Withdraw(
 	orderNumber string,
 	sumCents int64,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin withdrawal transaction: %w", err)
 	}
@@ -201,7 +207,7 @@ FROM withdrawals
 WHERE user_id = $1
 	ORDER BY processed_at DESC, id DESC;`
 
-	rows, err := r.pool.Query(ctx, query, userID)
+	rows, err := r.db.Query(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("select user withdrawals: %w", err)
 	}
@@ -258,7 +264,7 @@ RETURNING claimed.number,
 		return nil, errors.New("order claim limit and lease must be positive")
 	}
 
-	rows, err := r.pool.Query(ctx, query, limit, leaseSeconds)
+	rows, err := r.db.Query(ctx, query, limit, leaseSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("claim due orders: %w", err)
 	}
@@ -294,7 +300,7 @@ func (r *Repository) UpdateOrderStatus(
 	accrualCents *int64,
 	nextCheckAt time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin order update transaction: %w", err)
 	}

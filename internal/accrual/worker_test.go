@@ -3,6 +3,7 @@ package accrual
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type workerRepositoryStub struct {
+	mu           sync.Mutex
 	status       model.OrderStatus
 	accrualCents *int64
 	nextCheckAt  time.Time
@@ -37,6 +39,8 @@ func (r *workerRepositoryStub) UpdateOrderStatus(
 	accrualCents *int64,
 	nextCheckAt time.Time,
 ) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.status = status
 	r.accrualCents = accrualCents
 	r.nextCheckAt = nextCheckAt

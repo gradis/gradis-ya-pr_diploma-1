@@ -33,7 +33,7 @@ func TestRepositoryTransactions(t *testing.T) {
 	t.Cleanup(db.Close)
 
 	clean := func(cleanupContext context.Context) {
-		if _, err := db.Pool.Exec(cleanupContext, `TRUNCATE withdrawals, orders, users RESTART IDENTITY CASCADE`); err != nil {
+		if _, err := db.Exec(cleanupContext, `TRUNCATE withdrawals, orders, users RESTART IDENTITY CASCADE`); err != nil {
 			t.Fatalf("clean test database: %v", err)
 		}
 	}
@@ -44,7 +44,7 @@ func TestRepositoryTransactions(t *testing.T) {
 		clean(cleanupContext)
 	})
 
-	repo := postgresrepository.New(db.Pool)
+	repo := postgresrepository.New(db)
 	firstUserID, err := repo.CreateUser(ctx, "integration-first", "hash")
 	if err != nil {
 		t.Fatalf("create first user: %v", err)

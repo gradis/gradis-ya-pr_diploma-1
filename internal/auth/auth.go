@@ -2,28 +2,41 @@ package auth
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const CookieName = "gophermart_session"
+
+const tokenTTL = 24 * time.Hour
 
 var ErrInvalidToken = errors.New("invalid authentication token")
 
 type userIDContextKey struct{}
 
 type Manager struct {
-	secret []byte
+	secret       []byte
+	secureCookie bool
+	now          func() time.Time
 }
 
-func NewManager(secret string) *Manager {
-	return &Manager{secret: []byte(secret)}
+type Option func(*Manager)
+
+func WithSecureCookie(secure bool) Option {
+	return func(m *Manager) { m.secureCookie = secure }
+}
+
+func NewManager(secret string, options ...Option) *Manager {
+	m := &Manager{secret: []byte(secret), secureCookie: true, now: time.Now}
+	for _, option := range options {
+		option(m)
+	}
+	return m
 }
 
 func WithUserID(ctx context.Context, userID int64) context.Context {
@@ -40,28 +53,31 @@ func (m *Manager) Sign(userID int64) (string, error) {
 		return "", ErrInvalidToken
 	}
 
-	payload := strconv.FormatInt(userID, 10)
-	signature := m.signature(payload)
-
-	return payload + "." + base64.RawURLEncoding.EncodeToString(signature), nil
+	now := m.now()
+	claims := jwt.RegisteredClaims{
+		Subject:   strconv.FormatInt(userID, 10),
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(tokenTTL)),
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
 }
 
-func (m *Manager) Verify(token string) (int64, error) {
-	payload, encodedSignature, ok := strings.Cut(token, ".")
-	if !ok || payload == "" || encodedSignature == "" || len(m.secret) == 0 {
+func (m *Manager) Verify(value string) (int64, error) {
+	if len(m.secret) == 0 {
 		return 0, ErrInvalidToken
 	}
-
-	userID, err := strconv.ParseInt(payload, 10, 64)
+	claims := &jwt.RegisteredClaims{}
+	token, err := jwt.ParseWithClaims(value, claims, func(_ *jwt.Token) (any, error) {
+		return m.secret, nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithTimeFunc(m.now))
+	if err != nil || !token.Valid {
+		return 0, ErrInvalidToken
+	}
+	userID, err := strconv.ParseInt(claims.Subject, 10, 64)
 	if err != nil || userID <= 0 {
 		return 0, ErrInvalidToken
 	}
-
-	signature, err := base64.RawURLEncoding.DecodeString(encodedSignature)
-	if err != nil || !hmac.Equal(signature, m.signature(payload)) {
-		return 0, ErrInvalidToken
-	}
-
 	return userID, nil
 }
 
@@ -76,14 +92,10 @@ func (m *Manager) SetCookie(writer http.ResponseWriter, userID int64) error {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   m.secureCookie,
+		MaxAge:   int(tokenTTL / time.Second),
 		SameSite: http.SameSiteLaxMode,
 	})
 
 	return nil
-}
-
-func (m *Manager) signature(payload string) []byte {
-	mac := hmac.New(sha256.New, m.secret)
-	_, _ = mac.Write([]byte(payload))
-	return mac.Sum(nil)
 }

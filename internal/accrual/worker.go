@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gradis/ya-pr_diploma-1/internal/model"
@@ -15,6 +16,7 @@ const (
 	orderRetryInterval = time.Second
 	workerLeaseTime    = time.Minute
 	workerBatchSize    = 10
+	workerCount        = 4
 )
 
 type orderRepository interface {
@@ -37,6 +39,7 @@ type Worker struct {
 	client     checker
 	logg       *zap.Logger
 	now        func() time.Time
+	gate       *rateGate
 }
 
 func NewWorker(repository orderRepository, client checker, logg *zap.Logger) *Worker {
@@ -44,12 +47,14 @@ func NewWorker(repository orderRepository, client checker, logg *zap.Logger) *Wo
 		logg = zap.NewNop()
 	}
 
-	return &Worker{
+	worker := &Worker{
 		repository: repository,
 		client:     client,
 		logg:       logg,
 		now:        time.Now,
 	}
+	worker.gate = &rateGate{now: func() time.Time { return worker.now() }}
+	return worker
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -58,6 +63,9 @@ func (w *Worker) Run(ctx context.Context) {
 
 	var blockedUntil time.Time
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		if !w.now().Before(blockedUntil) {
 			blockedUntil = w.processBatch(ctx)
 		}
@@ -71,6 +79,8 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) processBatch(ctx context.Context) time.Time {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
 	orders, err := w.repository.ClaimDueOrders(ctx, workerBatchSize, workerLeaseTime)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -79,46 +89,47 @@ func (w *Worker) processBatch(ctx context.Context) time.Time {
 		return time.Time{}
 	}
 
-	for index, order := range orders {
-		retryAfter, err := w.processOrder(ctx, order)
-		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				w.logg.Error(
-					"failed to process order accrual",
-					zap.String("order", order.Number),
-					zap.Error(err),
-				)
-			}
-			continue
-		}
-
-		if retryAfter > 0 {
-			blockedUntil := w.now().Add(retryAfter)
-			for _, unprocessedOrder := range orders[index+1:] {
-				if err := w.repository.UpdateOrderStatus(
-					ctx,
-					unprocessedOrder.Number,
-					unprocessedOrder.Status,
-					nil,
-					blockedUntil,
-				); err != nil && !errors.Is(err, context.Canceled) {
-					w.logg.Error(
-						"failed to reschedule order after accrual rate limit",
-						zap.String("order", unprocessedOrder.Number),
-						zap.Error(err),
-					)
+	// Complete or abandon a batch before its one-minute database lease expires.
+	ctx = context.WithValue(ctx, rateGateKey{}, w.gate)
+	jobs := make(chan model.Order)
+	var workers sync.WaitGroup
+	for range workerCount {
+		workers.Go(func() {
+			for order := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				if _, err := w.processOrder(ctx, order); err != nil && !errors.Is(err, context.Canceled) {
+					w.logg.Error("failed to process order accrual", zap.String("order", order.Number), zap.Error(err))
 				}
 			}
-
-			return blockedUntil
+		})
+	}
+dispatch:
+	for _, order := range orders {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- order:
 		}
 	}
-
-	return time.Time{}
+	close(jobs)
+	workers.Wait()
+	return w.gate.deadline()
 }
 
 func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Duration, error) {
-	result, err := w.client.Check(ctx, order.Number)
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	var result Result
+	var err error
+	if delay := w.gate.remaining(); delay > 0 {
+		err = &RateLimitError{RetryAfter: delay, until: w.gate.deadline()}
+	} else {
+		result, err = w.client.Check(context.WithValue(ctx, rateGateKey{}, w.gate), order.Number)
+	}
+
 	if err != nil {
 		nextCheckAt := w.now().Add(orderRetryInterval)
 
@@ -128,7 +139,10 @@ func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Dura
 			if retryAfter <= 0 {
 				retryAfter = orderRetryInterval
 			}
-			nextCheckAt = w.now().Add(retryAfter)
+			if rateLimitError.until.IsZero() {
+				w.gate.block(retryAfter)
+			}
+			nextCheckAt = w.gate.deadline()
 
 			if updateErr := w.repository.UpdateOrderStatus(
 				ctx,
@@ -137,7 +151,7 @@ func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Dura
 				nil,
 				nextCheckAt,
 			); updateErr != nil {
-				return 0, fmt.Errorf("reschedule rate-limited order: %w", updateErr)
+				return retryAfter, fmt.Errorf("reschedule rate-limited order: %w", updateErr)
 			}
 
 			return retryAfter, nil

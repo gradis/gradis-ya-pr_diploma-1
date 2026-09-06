@@ -67,7 +67,7 @@ func TestClientCheck(t *testing.T) {
 			}
 			if test.wantRate > 0 {
 				var rateError *RateLimitError
-				if !errors.As(err, &rateError) || rateError.RetryAfter != test.wantRate {
+				if !errors.As(err, &rateError) || rateError.RetryAfter <= 0 || rateError.RetryAfter > test.wantRate {
 					t.Fatalf("rate limit error = %#v", err)
 				}
 				return

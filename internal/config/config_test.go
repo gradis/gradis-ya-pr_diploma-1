@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestParseEnvironmentOverridesFlags(t *testing.T) {
+func TestParseFlagsOverrideEnvironment(t *testing.T) {
 	t.Setenv("RUN_ADDRESS", "127.0.0.1:9000")
 	t.Setenv("DATABASE_URI", "postgres://environment")
 	t.Setenv("ACCRUAL_SYSTEM_ADDRESS", "http://accrual.local/")
@@ -22,13 +22,13 @@ func TestParseEnvironmentOverridesFlags(t *testing.T) {
 		t.Fatalf("parse config: %v", err)
 	}
 
-	if cfg.RunAddress != "127.0.0.1:9000" {
+	if cfg.RunAddress != "localhost:8000" {
 		t.Fatalf("unexpected run address %q", cfg.RunAddress)
 	}
-	if cfg.DatabaseURI != "postgres://environment" {
+	if cfg.DatabaseURI != "postgres://flag" {
 		t.Fatalf("unexpected database URI %q", cfg.DatabaseURI)
 	}
-	if cfg.AccrualSystemAddress != "http://accrual.local" {
+	if cfg.AccrualSystemAddress != "http://flag.local" {
 		t.Fatalf("unexpected accrual address %q", cfg.AccrualSystemAddress)
 	}
 	if cfg.AuthSecret != "test-secret" {
@@ -147,10 +147,34 @@ func TestParseReadsDotEnvWithoutOverridingOperatingSystemEnvironment(t *testing.
 		t.Fatal(err)
 	}
 
-	if cfg.RunAddress != "127.0.0.1:9200" ||
+	if cfg.RunAddress != "localhost:9000" ||
 		cfg.DatabaseURI != "postgres://flag" ||
 		cfg.AccrualSystemAddress != "http://flag-accrual.local" ||
 		cfg.AuthSecret != "dotenv-secret" {
 		t.Fatalf("unexpected .env configuration: %#v", cfg)
+	}
+}
+
+func TestCookieSecure(t *testing.T) {
+	t.Setenv("COOKIE_SECURE", "true")
+	cfg, err := Parse(nil)
+	if err != nil || !cfg.CookieSecure {
+		t.Fatalf("environment: %+v, %v", cfg, err)
+	}
+	cfg, err = Parse([]string{"-cookie-secure=false"})
+	if err != nil || cfg.CookieSecure {
+		t.Fatalf("flag: %+v, %v", cfg, err)
+	}
+	t.Setenv("COOKIE_SECURE", "invalid")
+	if _, err := Parse(nil); err == nil {
+		t.Fatal("accepted invalid boolean")
+	}
+}
+
+func TestEnvironmentUsedWhenFlagAbsent(t *testing.T) {
+	t.Setenv("RUN_ADDRESS", "localhost:9123")
+	cfg, err := Parse(nil)
+	if err != nil || cfg.RunAddress != "localhost:9123" {
+		t.Fatalf("%+v, %v", cfg, err)
 	}
 }

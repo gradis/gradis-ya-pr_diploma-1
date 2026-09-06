@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -24,6 +25,7 @@ type Config struct {
 	DatabaseURI          string
 	AccrualSystemAddress string
 	AuthSecret           string
+	CookieSecure         bool
 }
 
 func Parse(args []string) (Config, error) {
@@ -40,7 +42,21 @@ func Parse(args []string) (Config, error) {
 	applyDotEnv(&cfg.AccrualSystemAddress, "ACCRUAL_SYSTEM_ADDRESS", dotEnv)
 	applyDotEnv(&cfg.AuthSecret, "AUTH_SECRET", dotEnv)
 
+	applyEnv(&cfg.RunAddress, "RUN_ADDRESS")
+	applyEnv(&cfg.DatabaseURI, "DATABASE_URI")
+	applyEnv(&cfg.AccrualSystemAddress, "ACCRUAL_SYSTEM_ADDRESS")
+	applyEnv(&cfg.AuthSecret, "AUTH_SECRET")
+
+	cookieSecure := "false" // Local development and course autotests use HTTP.
+	applyDotEnv(&cookieSecure, "COOKIE_SECURE", dotEnv)
+	applyEnv(&cookieSecure, "COOKIE_SECURE")
+	cfg.CookieSecure, err = strconv.ParseBool(strings.TrimSpace(cookieSecure))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse COOKIE_SECURE: %w", err)
+	}
+
 	flags := flag.NewFlagSet("gophermart", flag.ContinueOnError)
+	flags.BoolVar(&cfg.CookieSecure, "cookie-secure", cfg.CookieSecure, "send session cookie only over HTTPS")
 	flags.StringVar(&cfg.RunAddress, "a", cfg.RunAddress, "server address")
 	flags.StringVar(&cfg.DatabaseURI, "d", cfg.DatabaseURI, "PostgreSQL connection URI")
 	flags.StringVar(&cfg.AccrualSystemAddress, "r", cfg.AccrualSystemAddress, "accrual system address")
@@ -48,11 +64,6 @@ func Parse(args []string) (Config, error) {
 	if err := flags.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("parse flags: %w", err)
 	}
-
-	applyEnv(&cfg.RunAddress, "RUN_ADDRESS")
-	applyEnv(&cfg.DatabaseURI, "DATABASE_URI")
-	applyEnv(&cfg.AccrualSystemAddress, "ACCRUAL_SYSTEM_ADDRESS")
-	applyEnv(&cfg.AuthSecret, "AUTH_SECRET")
 
 	cfg.RunAddress = strings.TrimSpace(cfg.RunAddress)
 	cfg.DatabaseURI = strings.TrimSpace(cfg.DatabaseURI)

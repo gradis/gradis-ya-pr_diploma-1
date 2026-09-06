@@ -80,9 +80,9 @@ func run(logg *zap.Logger) error {
 	}
 	defer db.Close()
 
-	repo := postgresrepository.New(db.Pool)
+	repo := postgresrepository.New(db)
 	loyaltyService := service.New(repo)
-	authManager := auth.NewManager(cfg.AuthSecret)
+	authManager := auth.NewManager(cfg.AuthSecret, auth.WithSecureCookie(cfg.CookieSecure))
 	httpHandler := handler.New(loyaltyService, authManager, logg)
 	serverBaseContext, cancelServerBaseContext := context.WithCancel(context.Background())
 	defer cancelServerBaseContext()
@@ -105,7 +105,7 @@ func run(logg *zap.Logger) error {
 		return fmt.Errorf("listen on %s: %w", cfg.RunAddress, err)
 	}
 
-	accrualClient := accrual.NewClient(cfg.AccrualSystemAddress, nil)
+	accrualClient := accrual.NewClient(cfg.AccrualSystemAddress, nil, accrual.WithLogger(logg))
 	accrualWorker := accrual.NewWorker(repo, accrualClient, logg)
 	workerContext, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()

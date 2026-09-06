@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -43,7 +42,7 @@ func TestManagerRejectsInvalidTokens(t *testing.T) {
 		"-1.invalid",
 		"not-a-number.invalid",
 		validToken + ".extra",
-		strings.Replace(validToken, "42.", "43.", 1),
+		"42.legacy-signature",
 	}
 	for _, token := range tests {
 		if _, err := manager.Verify(token); !errors.Is(err, ErrInvalidToken) {
@@ -74,7 +73,7 @@ func TestManagerSetsSafeSessionCookie(t *testing.T) {
 		t.Fatalf("cookies = %#v", cookies)
 	}
 	cookie := cookies[0]
-	if cookie.Name != CookieName || cookie.Path != "/" || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
+	if cookie.Name != CookieName || cookie.Path != "/" || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("unsafe cookie attributes: %#v", cookie)
 	}
 }
