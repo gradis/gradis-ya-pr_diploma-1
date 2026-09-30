@@ -85,7 +85,7 @@ func TestWorkerRateLimitSurvivesDatabaseFailure(t *testing.T) {
 	}), nil)
 	worker.now = func() time.Time { return fixed }
 	for _, number := range []string{"1", "2", "3"} {
-		if _, err := worker.processOrder(context.Background(), model.Order{Number: number, Status: model.OrderStatusNew}); err == nil {
+		if err := worker.processOrder(context.Background(), model.Order{Number: number, Status: model.OrderStatusNew}); err == nil {
 			t.Fatal("write error lost")
 		}
 	}
@@ -96,7 +96,7 @@ func TestWorkerRateLimitSurvivesDatabaseFailure(t *testing.T) {
 		t.Fatalf("deadline=%v", worker.gate.deadline())
 	}
 	fixed = fixed.Add(time.Minute)
-	_, _ = worker.processOrder(context.Background(), model.Order{Number: "4", Status: model.OrderStatusNew})
+	_ = worker.processOrder(context.Background(), model.Order{Number: "4", Status: model.OrderStatusNew})
 	if calls.Load() != 2 {
 		t.Fatal("worker did not resume after cooldown")
 	}

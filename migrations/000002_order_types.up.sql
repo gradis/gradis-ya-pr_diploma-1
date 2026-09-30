@@ -1,5 +1,7 @@
 BEGIN;
 
+ALTER TABLE users ALTER COLUMN password_hash TYPE VARCHAR(60);
+
 -- Preserve the byte limit for Unicode logins; VARCHAR limits characters.
 ALTER TABLE users ALTER COLUMN login TYPE VARCHAR(256);
 ALTER TABLE orders ALTER COLUMN number TYPE VARCHAR(256);

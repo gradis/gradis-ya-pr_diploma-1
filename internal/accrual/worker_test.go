@@ -90,12 +90,12 @@ func TestWorkerProcessesFinalAccrual(t *testing.T) {
 	fixedNow := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	worker.now = func() time.Time { return fixedNow }
 
-	retry, err := worker.processOrder(context.Background(), model.Order{
+	err := worker.processOrder(context.Background(), model.Order{
 		Number: "12345678903",
 		Status: model.OrderStatusNew,
 	})
-	if err != nil || retry != 0 {
-		t.Fatalf("processOrder() retry = %s, error = %v", retry, err)
+	if err != nil {
+		t.Fatalf("processOrder() error = %v", err)
 	}
 	if repo.status != model.OrderStatusProcessed {
 		t.Fatalf("status = %q", repo.status)
@@ -111,12 +111,12 @@ func TestWorkerHonorsRateLimit(t *testing.T) {
 	fixedNow := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	worker.now = func() time.Time { return fixedNow }
 
-	retry, err := worker.processOrder(context.Background(), model.Order{
+	err := worker.processOrder(context.Background(), model.Order{
 		Number: "12345678903",
 		Status: model.OrderStatusProcessing,
 	})
-	if err != nil || retry != 5*time.Second {
-		t.Fatalf("processOrder() retry = %s, error = %v", retry, err)
+	if err != nil {
+		t.Fatalf("processOrder() error = %v", err)
 	}
 	if repo.status != model.OrderStatusProcessing || !repo.nextCheckAt.Equal(fixedNow.Add(5*time.Second)) {
 		t.Fatalf("unexpected reschedule: status=%q next=%s", repo.status, repo.nextCheckAt)
@@ -129,7 +129,7 @@ func TestWorkerRetriesUnknownError(t *testing.T) {
 	fixedNow := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	worker.now = func() time.Time { return fixedNow }
 
-	_, err := worker.processOrder(context.Background(), model.Order{
+	err := worker.processOrder(context.Background(), model.Order{
 		Number: "12345678903",
 		Status: model.OrderStatusNew,
 	})
@@ -200,12 +200,12 @@ func TestWorkerMapsAccrualStatuses(t *testing.T) {
 			worker := NewWorker(repo, checkerStub{result: test.result}, nil)
 			worker.now = func() time.Time { return fixedNow }
 
-			retry, err := worker.processOrder(context.Background(), model.Order{
+			err := worker.processOrder(context.Background(), model.Order{
 				Number: "12345678903",
 				Status: test.orderStatus,
 			})
-			if err != nil || retry != 0 {
-				t.Fatalf("processOrder() = %s, %v", retry, err)
+			if err != nil {
+				t.Fatalf("processOrder() error = %v", err)
 			}
 			if repo.status != test.wantStatus || !repo.nextCheckAt.Equal(test.wantNext) {
 				t.Fatalf("status = %q, next = %s; want %q, %s", repo.status, repo.nextCheckAt, test.wantStatus, test.wantNext)
@@ -227,7 +227,7 @@ func TestWorkerPropagatesRepositoryErrors(t *testing.T) {
 		checkerStub{result: Result{Status: StatusProcessed}},
 		zap.NewNop(),
 	)
-	if _, err := worker.processOrder(context.Background(), model.Order{Number: "12345678903"}); err == nil {
+	if err := worker.processOrder(context.Background(), model.Order{Number: "12345678903"}); err == nil {
 		t.Fatal("order update error was lost")
 	}
 

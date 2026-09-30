@@ -52,6 +52,8 @@ jobs:
           (cd cmd/accrual && chmod +x accrual_linux_amd64)
 
       - name: Test
+        env:
+          AUTH_SECRET: gophermart-ci-only-secret-not-for-production
         run: |
           gophermarttest \
             -test.v -test.run=^TestGophermart$ \

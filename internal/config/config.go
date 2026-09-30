@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,7 +15,6 @@ import (
 
 const (
 	defaultRunAddress = "localhost:8080"
-	authSecretBytes   = 32
 )
 
 type Config struct {
@@ -69,24 +66,8 @@ func Parse(args []string) (Config, error) {
 	cfg.DatabaseURI = strings.TrimSpace(cfg.DatabaseURI)
 	cfg.AccrualSystemAddress = strings.TrimRight(strings.TrimSpace(cfg.AccrualSystemAddress), "/")
 	cfg.AuthSecret = strings.TrimSpace(cfg.AuthSecret)
-	if cfg.AuthSecret == "" {
-		secret, err := randomAuthSecret()
-		if err != nil {
-			return Config{}, fmt.Errorf("generate authentication secret: %w", err)
-		}
-		cfg.AuthSecret = secret
-	}
 
 	return cfg, nil
-}
-
-func randomAuthSecret() (string, error) {
-	buffer := make([]byte, authSecretBytes)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", err
-	}
-
-	return base64.RawURLEncoding.EncodeToString(buffer), nil
 }
 
 func (c Config) Validate() error {

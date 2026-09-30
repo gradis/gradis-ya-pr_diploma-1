@@ -79,20 +79,27 @@ func TestValidateRequiresServiceAddresses(t *testing.T) {
 	}
 }
 
-func TestParseGeneratesRandomAuthenticationSecret(t *testing.T) {
-	t.Setenv("AUTH_SECRET", "")
-
-	first, err := Parse(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := Parse(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(first.AuthSecret) < 32 || first.AuthSecret == second.AuthSecret {
-		t.Fatalf("authentication secrets were not generated securely")
+func TestParseRequiresExplicitAuthenticationSecret(t *testing.T) {
+	t.Chdir(t.TempDir()) // A developer's .env must not supply the missing secret.
+	for _, secret := range []string{"", "   ", "configured-secret"} {
+		t.Run(secret, func(t *testing.T) {
+			t.Setenv("AUTH_SECRET", secret)
+			cfg, err := Parse([]string{"-a", "localhost:8080", "-d", "postgres://database", "-r", "http://accrual.local"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.AuthSecret != strings.TrimSpace(secret) {
+				t.Fatal("secret was generated or changed")
+			}
+			err = cfg.Validate()
+			if strings.TrimSpace(secret) == "" {
+				if err == nil || !strings.Contains(err.Error(), "authentication secret is required") {
+					t.Fatalf("expected missing secret error, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gradis/ya-pr_diploma-1/migrations"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestOrderTypesMigrationRoundTrip(t *testing.T) {
@@ -50,7 +51,11 @@ func TestOrderTypesMigrationRoundTrip(t *testing.T) {
 		}
 	}
 	apply("000001_init.up.sql")
-	if _, err := conn.Exec(ctx, `INSERT INTO users (login, password_hash) VALUES ($1, 'hash')`, strings.Repeat("я", 128)); err != nil {
+	hash, err := bcrypt.GenerateFromPassword([]byte("migration-password"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `INSERT INTO users (login, password_hash) VALUES ($1, $2)`, strings.Repeat("я", 128), string(hash)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := conn.Exec(ctx, `INSERT INTO orders (number,user_id,status,accrual_cents) VALUES ('123',1,'PROCESSED',500)`); err != nil {
@@ -67,9 +72,27 @@ func TestOrderTypesMigrationRoundTrip(t *testing.T) {
 			t.Fatalf("data changed: %s %s %d", status, typ, amount)
 		}
 	}
+	assertHash := func(wantType string) {
+		t.Helper()
+		var stored, columnType string
+		if err := conn.QueryRow(ctx, `SELECT password_hash::text FROM users WHERE id=1`).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored != string(hash) {
+			t.Fatal("migration changed password hash")
+		}
+		if err := conn.QueryRow(ctx, `SELECT format_type(atttypid,atttypmod) FROM pg_attribute WHERE attrelid='users'::regclass AND attname='password_hash'`).Scan(&columnType); err != nil {
+			t.Fatal(err)
+		}
+		if columnType != wantType {
+			t.Fatalf("password_hash type=%s, want %s", columnType, wantType)
+		}
+	}
 	apply("000002_order_types.up.sql")
 	assertData("order_status")
+	assertHash("character varying(60)")
 	for _, query := range []string{
+		`INSERT INTO users(login,password_hash) VALUES ('overlong-hash',repeat('x',61))`,
 		`INSERT INTO orders(number,user_id,status) VALUES ('456',1,'UNKNOWN')`,
 		`INSERT INTO orders(number,user_id) VALUES ('abc',1)`,
 		`INSERT INTO orders(number,user_id) VALUES (repeat('1',257),1)`,
@@ -92,6 +115,8 @@ func TestOrderTypesMigrationRoundTrip(t *testing.T) {
 	}
 	apply("000002_order_types.down.sql")
 	assertData("text")
+	assertHash("text")
 	apply("000002_order_types.up.sql")
 	assertData("order_status")
+	assertHash("character varying(60)")
 }

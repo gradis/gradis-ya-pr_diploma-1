@@ -1,5 +1,7 @@
 BEGIN;
 
+ALTER TABLE users ALTER COLUMN password_hash TYPE TEXT;
+
 DROP INDEX orders_pending_idx;
 ALTER TABLE orders ALTER COLUMN status DROP DEFAULT;
 ALTER TABLE orders ALTER COLUMN status TYPE TEXT USING status::text;

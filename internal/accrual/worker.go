@@ -99,7 +99,7 @@ func (w *Worker) processBatch(ctx context.Context) time.Time {
 				if ctx.Err() != nil {
 					return
 				}
-				if _, err := w.processOrder(ctx, order); err != nil && !errors.Is(err, context.Canceled) {
+				if err := w.processOrder(ctx, order); err != nil && !errors.Is(err, context.Canceled) {
 					w.logg.Error("failed to process order accrual", zap.String("order", order.Number), zap.Error(err))
 				}
 			}
@@ -118,9 +118,9 @@ dispatch:
 	return w.gate.deadline()
 }
 
-func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Duration, error) {
+func (w *Worker) processOrder(ctx context.Context, order model.Order) error {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return err
 	}
 	var result Result
 	var err error
@@ -151,14 +151,14 @@ func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Dura
 				nil,
 				nextCheckAt,
 			); updateErr != nil {
-				return retryAfter, fmt.Errorf("reschedule rate-limited order: %w", updateErr)
+				return fmt.Errorf("reschedule rate-limited order: %w", updateErr)
 			}
 
-			return retryAfter, nil
+			return nil
 		}
 
 		if errors.Is(err, ErrOrderNotRegistered) {
-			return 0, w.repository.UpdateOrderStatus(
+			return w.repository.UpdateOrderStatus(
 				ctx,
 				order.Number,
 				order.Status,
@@ -174,10 +174,10 @@ func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Dura
 			nil,
 			nextCheckAt,
 		); updateErr != nil {
-			return 0, fmt.Errorf("reschedule order after accrual error: %w", updateErr)
+			return fmt.Errorf("reschedule order after accrual error: %w", updateErr)
 		}
 
-		return 0, err
+		return err
 	}
 
 	nextCheckAt := w.now()
@@ -198,7 +198,7 @@ func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Dura
 	case StatusProcessed:
 		status = model.OrderStatusProcessed
 	default:
-		return 0, fmt.Errorf("unsupported accrual status %q", result.Status)
+		return fmt.Errorf("unsupported accrual status %q", result.Status)
 	}
 
 	if err := w.repository.UpdateOrderStatus(
@@ -208,8 +208,8 @@ func (w *Worker) processOrder(ctx context.Context, order model.Order) (time.Dura
 		accrualCents,
 		nextCheckAt,
 	); err != nil {
-		return 0, fmt.Errorf("update order after accrual response: %w", err)
+		return fmt.Errorf("update order after accrual response: %w", err)
 	}
 
-	return 0, nil
+	return nil
 }
