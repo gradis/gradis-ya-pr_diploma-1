@@ -47,10 +47,13 @@ jobs:
 
       - name: Prepare binaries
         run: |
+          go test ./...
           (cd cmd/gophermart && go build -buildvcs=false -o gophermart)
           (cd cmd/accrual && chmod +x accrual_linux_amd64)
 
       - name: Test
+        env:
+          AUTH_SECRET: gophermart-ci-only-secret-not-for-production
         run: |
           gophermarttest \
             -test.v -test.run=^TestGophermart$ \
